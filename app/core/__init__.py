@@ -9,10 +9,16 @@ from app.core.audio_processor import AudioProcessor, AudioValidationError
 from app.core.voice_separator import VoiceSeparator, VoiceSeparationError
 from app.core.diarization import Diarizer, DiarizationError, SpeakerSegment
 from app.core.embedding import EmbeddingProcessor, SpeakerEmbedding, EmbeddingError
+from app.core.clustering import ClusteringProcessor, SpeakerCluster, ClusteringError
+from app.core.profile_db import ProfileDatabase, SpeakerProfile, ProfileDBError
+from app.core.pipeline import Pipeline, ProcessingResult, PipelineError
 
 __all__ = [
     'AudioProcessor', 'AudioValidationError',
     'VoiceSeparator', 'VoiceSeparationError',
     'Diarizer', 'DiarizationError', 'SpeakerSegment',
-    'EmbeddingProcessor', 'SpeakerEmbedding', 'EmbeddingError'
+    'EmbeddingProcessor', 'SpeakerEmbedding', 'EmbeddingError',
+    'ClusteringProcessor', 'SpeakerCluster', 'ClusteringError',
+    'ProfileDatabase', 'SpeakerProfile', 'ProfileDBError',
+    'Pipeline', 'ProcessingResult', 'PipelineError'
 ]
