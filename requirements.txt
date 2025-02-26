@@ -1,0 +1,39 @@
+# Core dependencies
+numpy==1.24.3
+scipy==1.11.1
+torch==2.0.1
+torchaudio==2.0.2
+librosa==0.10.0
+soundfile==0.12.1
+pyloudnorm==0.1.0
+matplotlib==3.7.2
+pyyaml==6.0.1
+
+# Voice separation dependencies
+asteroid-filterbanks==0.4.0
+speechbrain==0.5.14
+
+# Embedding and clustering
+scikit-learn==1.3.0
+faiss-cpu==1.7.4
+hdbscan==0.8.29
+umap-learn==0.5.3
+
+# GUI
+kivy==2.2.1
+kivy-garden.graph==0.4.0
+plyer==2.1.0
+pillow==10.0.0
+
+# Database
+sqlalchemy==2.0.19
+alembic==1.11.1
+
+# CLI utilities
+tqdm==4.65.0
+click==8.1.6
+colorama==0.4.6
+
+# Whisper integration (for diarization)
+openai-whisper==20230314
+pyannote.audio==2.1.1 
