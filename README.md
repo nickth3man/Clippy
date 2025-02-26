@@ -59,13 +59,50 @@ Clippy is a tool for building and managing a database of speaker profiles from m
 
 Basic usage:
 ```
-python -m app.cli process path/to/audio.mp3
+python main.py process path/to/audio.mp3
 ```
 
 For more options:
 ```
-python -m app.cli --help
+python main.py --help
 ```
+
+#### CLI Commands
+
+- **process**: Process an audio file
+  ```
+  python main.py process path/to/audio.mp3 [--min-speakers N] [--max-speakers N] [--output result.json]
+  ```
+
+- **list**: List all speaker profiles
+  ```
+  python main.py list
+  ```
+
+- **show**: Show details of a speaker profile
+  ```
+  python main.py show PROFILE_ID
+  ```
+
+- **delete**: Delete a speaker profile
+  ```
+  python main.py delete PROFILE_ID [--force]
+  ```
+
+- **backup**: Backup the database
+  ```
+  python main.py backup [--output backup.zip]
+  ```
+
+- **restore**: Restore the database from a backup
+  ```
+  python main.py restore backup.zip [--force]
+  ```
+
+- **stats**: Show database statistics
+  ```
+  python main.py stats
+  ```
 
 ## System Requirements
 
@@ -81,6 +118,32 @@ python -m app.cli --help
   - Quad-core CPU
   - CUDA-compatible GPU with 4GB VRAM
 
+## Architecture
+
+Clippy is built with a modular architecture that separates concerns and allows for easy extension:
+
+### Core Components
+
+- **AudioProcessor**: Handles audio loading, validation, and preprocessing
+- **VoiceSeparator**: Separates individual voices from mixed audio
+- **Diarizer**: Performs speaker diarization to identify speaker segments
+- **EmbeddingProcessor**: Extracts speaker embeddings from voice segments
+- **ClusteringProcessor**: Clusters speaker embeddings to identify unique speakers
+- **ProfileDatabase**: Manages the database of speaker profiles
+- **Pipeline**: Integrates all components into a complete processing pipeline
+
+### Processing Pipeline
+
+The processing pipeline follows these steps:
+
+1. **Audio Loading**: Load and validate the audio file
+2. **Diarization**: Identify speaker segments in the audio
+3. **Voice Separation**: Separate individual voices from the mixed audio
+4. **Embedding Extraction**: Extract speaker embeddings from each voice
+5. **Clustering**: Cluster embeddings to identify unique speakers
+6. **Profile Matching**: Match speakers with existing profiles or create new ones
+7. **Database Update**: Update the profile database with new information
+
 ## Documentation
 
 For full documentation, see the `docs/` directory or visit [project website].
@@ -94,4 +157,6 @@ For full documentation, see the `docs/` directory or visit [project website].
 This project builds upon several open-source libraries:
 - SVoice for voice separation
 - WhisperX for diarization
-- [Other acknowledgments] 
+- PyTorch for deep learning models
+- Librosa for audio processing
+- SQLite for database management 
