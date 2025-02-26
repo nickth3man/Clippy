@@ -20,6 +20,8 @@ from typing import Dict, List, Optional, Tuple, Union, Any, Callable
 import json
 
 import numpy as np
+import torch
+import torchaudio
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -258,6 +260,9 @@ class Pipeline:
                 )
                 result.quality_metrics['separation_quality'] = separation_quality
                 
+                # Save separated voices to disk for later retrieval
+                self._save_separated_voices(result)
+                
             except VoiceSeparationError as e:
                 result.add_error(f"Voice separation failed: {e}")
                 return result
@@ -448,6 +453,74 @@ class Pipeline:
         """
         return self.profile_db.get_profile_appearances(profile_id)
     
+    def get_processing_result(self, recording_id: str) -> Optional[ProcessingResult]:
+        """
+        Get the processing result for a recording.
+        
+        This method retrieves the recording data from the database and reconstructs
+        a ProcessingResult object with the separated voices if available.
+        
+        Args:
+            recording_id: Recording identifier
+            
+        Returns:
+            ProcessingResult object or None if not found
+        """
+        # Get recording from database
+        recording = self.profile_db.get_recording(recording_id)
+        
+        if not recording:
+            logger.warning(f"Recording not found: {recording_id}")
+            return None
+            
+        # Create result object
+        result = ProcessingResult(
+            recording_id=recording_id,
+            recording_path=recording.get('file_path')
+        )
+        
+        # Set basic properties
+        result.duration = recording.get('duration', 0.0)
+        result.created_at = recording.get('created_at', time.time())
+        
+        # Get appearances for this recording
+        appearances = self.profile_db.get_recording_appearances(recording_id)
+        
+        # Get profiles for appearances
+        profiles = []
+        for appearance in appearances:
+            profile_id = appearance.get('profile_id')
+            profile = self.profile_db.get_profile(profile_id)
+            if profile:
+                profiles.append(profile)
+                
+        result.profiles = profiles
+        result.num_speakers = len(profiles)
+        
+        # Try to load separated voices from storage or current result
+        
+        # Check data/voices folder
+        voices_path = Path(f"data/voices/{recording_id}")
+        if voices_path.exists():
+            separated_voices = []
+            voice_files = list(voices_path.glob("*.npy"))
+            
+            for voice_file in sorted(voice_files):
+                try:
+                    voice = np.load(voice_file)
+                    separated_voices.append(voice)
+                except Exception as e:
+                    logger.warning(f"Failed to load voice file {voice_file}: {e}")
+            
+            if separated_voices:
+                result.separated_voices = separated_voices
+                
+        # If no voices found in storage, try to load from current result
+        if not result.separated_voices and self.current_result and self.current_result.recording_id == recording_id:
+            result.separated_voices = self.current_result.separated_voices
+            
+        return result
+    
     def get_database_stats(self) -> Dict:
         """
         Get statistics about the database.
@@ -478,6 +551,215 @@ class Pipeline:
         """
         self.profile_db.restore_database(backup_path)
     
+    def export_separated_voices(self, 
+                               result: ProcessingResult, 
+                               output_dir: Union[str, Path] = None,
+                               format: str = 'wav',
+                               sample_rate: int = 16000) -> List[Path]:
+        """
+        Export separated voices to audio files.
+        
+        Args:
+            result: Processing result containing separated voices
+            output_dir: Directory to save the audio files (defaults to "Exports" if None)
+            format: Audio format (wav, mp3, flac)
+            sample_rate: Sample rate for the output files
+            
+        Returns:
+            List of paths to the exported audio files
+            
+        Raises:
+            PipelineError: If export fails
+        """
+        if not result.separated_voices:
+            raise PipelineError("No separated voices to export")
+            
+        # Create base output directory (default to "Exports" if not specified)
+        if output_dir is None:
+            output_dir = Path("Exports")
+        else:
+            output_dir = Path(output_dir)
+            
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get recording ID or filename
+        recording_id = result.recording_id
+        recording_name = Path(result.recording_path).stem if result.recording_path else recording_id
+        
+        # Export each voice
+        output_files = []
+        for i, voice in enumerate(result.separated_voices):
+            # Get speaker info if available
+            if i < len(result.profiles):
+                profile = result.profiles[i]
+                speaker_id = profile.profile_id
+                speaker_name = profile.name
+                
+                # Create speaker-specific directory
+                speaker_dir = output_dir / speaker_name
+                speaker_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Create filename with speaker name
+                filename = f"{recording_name}_{speaker_name}.{format}"
+                output_path = speaker_dir / filename
+            else:
+                # For voices without identified profiles
+                unknown_dir = output_dir / "Unknown_Speakers"
+                unknown_dir.mkdir(parents=True, exist_ok=True)
+                
+                filename = f"{recording_name}_unknown_speaker_{i+1}.{format}"
+                output_path = unknown_dir / filename
+                
+            try:
+                # Convert to torch tensor if needed
+                if isinstance(voice, np.ndarray):
+                    voice_tensor = torch.from_numpy(voice)
+                else:
+                    voice_tensor = voice
+                    
+                # Ensure correct shape (channels, samples)
+                if len(voice_tensor.shape) == 1:
+                    voice_tensor = voice_tensor.unsqueeze(0)
+                    
+                # Save audio file
+                torchaudio.save(
+                    str(output_path),
+                    voice_tensor,
+                    sample_rate,
+                    format=format
+                )
+                
+                output_files.append(output_path)
+                logger.info(f"Exported voice to {output_path}")
+                
+            except Exception as e:
+                logger.error(f"Failed to export voice {i}: {e}")
+                raise PipelineError(f"Failed to export voice {i}: {e}")
+                
+        return output_files
+    
+    def _save_separated_voices(self, result: ProcessingResult) -> None:
+        """
+        Save separated voices to disk for later retrieval.
+        
+        Args:
+            result: Processing result containing separated voices
+        """
+        if not result.separated_voices:
+            return
+            
+        # Create directory for this recording
+        voices_dir = Path(f"data/voices/{result.recording_id}")
+        voices_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save each voice as a numpy array
+        for i, voice in enumerate(result.separated_voices):
+            # Convert to numpy if needed
+            if isinstance(voice, torch.Tensor):
+                voice_array = voice.cpu().numpy()
+            else:
+                voice_array = voice
+                
+            # Save to file
+            voice_path = voices_dir / f"voice_{i}.npy"
+            try:
+                np.save(voice_path, voice_array)
+                logger.debug(f"Saved voice to {voice_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save voice {i}: {e}")
+    
     def close(self) -> None:
         """Close all components."""
-        self.profile_db.close() 
+        self.profile_db.close()
+        
+        logger.info("Pipeline closed")
+        
+    def import_voices(self, 
+                     import_dir: Union[str, Path] = None,
+                     min_speakers: int = None,
+                     max_speakers: int = None,
+                     progress_callback: Callable[[str, float], None] = None) -> List[ProcessingResult]:
+        """
+        Import and process audio files from the Imports directory.
+        
+        This method scans the Imports directory for audio files containing multiple speakers,
+        processes each file through the complete pipeline (diarization, separation, etc.),
+        and exports the separated voices to the Exports directory.
+        
+        Args:
+            import_dir: Directory to import from (defaults to "Imports" if None)
+            min_speakers: Minimum number of speakers (optional)
+            max_speakers: Maximum number of speakers (optional)
+            progress_callback: Callback function for progress updates (optional)
+            
+        Returns:
+            List of ProcessingResult objects for each processed file
+            
+        Raises:
+            PipelineError: If import fails
+        """
+        # Set default import directory if not specified
+        if import_dir is None:
+            import_dir = Path("Imports")
+        else:
+            import_dir = Path(import_dir)
+            
+        if not import_dir.exists():
+            logger.warning(f"Import directory not found: {import_dir}")
+            return []
+            
+        # Find all audio files in the import directory
+        audio_files = []
+        for ext in ['wav', 'mp3', 'flac', 'ogg']:
+            audio_files.extend(list(import_dir.glob(f"*.{ext}")))
+            
+        if not audio_files:
+            logger.warning(f"No audio files found in {import_dir}")
+            return []
+            
+        # Process each audio file
+        results = []
+        total_files = len(audio_files)
+        
+        for i, audio_file in enumerate(sorted(audio_files)):
+            try:
+                # Update overall progress if callback provided
+                if progress_callback:
+                    file_progress = i / total_files
+                    progress_callback(f"Processing file {i+1}/{total_files}: {audio_file.name}", file_progress)
+                
+                # Create a file-specific progress callback that scales within the current file's progress range
+                file_callback = None
+                if progress_callback:
+                    def file_callback(status, prog):
+                        # Scale progress to be between current file's range in the overall progress
+                        overall_prog = (i + prog) / total_files
+                        progress_callback(f"File {i+1}/{total_files} - {status}", overall_prog)
+                
+                # Process the audio file through the complete pipeline
+                logger.info(f"Processing imported file: {audio_file}")
+                result = self.process_recording(
+                    file_path=audio_file,
+                    min_speakers=min_speakers,
+                    max_speakers=max_speakers,
+                    progress_callback=file_callback
+                )
+                
+                # Export the separated voices to the Exports directory
+                if result.separated_voices:
+                    try:
+                        self.export_separated_voices(result)
+                        logger.info(f"Exported separated voices for {audio_file.name}")
+                    except Exception as e:
+                        logger.error(f"Failed to export voices for {audio_file.name}: {e}")
+                
+                results.append(result)
+                
+            except Exception as e:
+                logger.error(f"Failed to process imported file {audio_file}: {e}")
+                
+        # Final progress update
+        if progress_callback:
+            progress_callback(f"Completed processing {len(results)}/{total_files} files", 1.0)
+            
+        return results 

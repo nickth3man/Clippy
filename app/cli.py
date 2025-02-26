@@ -118,6 +118,24 @@ def process_audio(args: argparse.Namespace) -> None:
                 
             logger.info(f"Result saved to {output_path}")
             
+        # Export separated voices if requested
+        if args.export_voices:
+            export_dir = args.export_voices
+            try:
+                output_files = pipeline.export_separated_voices(
+                    result, 
+                    export_dir,
+                    format=args.export_format
+                )
+                
+                if not args.quiet:
+                    print(f"\nExported {len(output_files)} separated voice files to {export_dir}:")
+                    for file_path in output_files:
+                        print(f"  - {file_path.name}")
+                        
+            except Exception as e:
+                logger.error(f"Failed to export separated voices: {e}")
+            
     except Exception as e:
         logger.error(f"Processing failed: {e}")
         
@@ -360,6 +378,53 @@ def show_stats(args: argparse.Namespace) -> None:
         pipeline.close()
 
 
+def export_voices(args: argparse.Namespace) -> None:
+    """
+    Export separated voices from a previously processed recording.
+    
+    Args:
+        args: Command-line arguments
+    """
+    # Initialize pipeline
+    pipeline = Pipeline(
+        models_dir=args.models_dir,
+        db_path=args.db_path
+    )
+    
+    try:
+        # Get recording
+        recording_id = args.recording_id
+        
+        # Get processing result
+        result = pipeline.get_processing_result(recording_id)
+        
+        if not result:
+            print(f"Recording not found: {recording_id}")
+            return
+            
+        if not result.separated_voices:
+            print(f"No separated voices found for recording: {recording_id}")
+            return
+            
+        # Export voices
+        output_files = pipeline.export_separated_voices(
+            result,
+            args.output_dir,
+            format=args.format
+        )
+        
+        print(f"Exported {len(output_files)} separated voice files to {args.output_dir}:")
+        for file_path in output_files:
+            print(f"  - {file_path.name}")
+            
+    except Exception as e:
+        logger.error(f"Failed to export voices: {e}")
+        
+    finally:
+        # Close pipeline
+        pipeline.close()
+
+
 def main() -> None:
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
@@ -427,6 +492,19 @@ def main() -> None:
         type=str,
         default=None,
         help="Path to save the result to"
+    )
+    process_parser.add_argument(
+        "--export-voices",
+        type=str,
+        default=None,
+        help="Directory to export separated voices to"
+    )
+    process_parser.add_argument(
+        "--export-format",
+        type=str,
+        default="wav",
+        choices=["wav", "mp3", "flac"],
+        help="Format for exported voice files"
     )
     process_parser.set_defaults(func=process_audio)
     
@@ -502,6 +580,31 @@ def main() -> None:
         help="Show database statistics"
     )
     stats_parser.set_defaults(func=show_stats)
+    
+    # Export voices command
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export separated voices from a recording"
+    )
+    export_parser.add_argument(
+        "recording_id",
+        type=str,
+        help="Recording ID"
+    )
+    export_parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="data/exports",
+        help="Directory to save the exported voices to"
+    )
+    export_parser.add_argument(
+        "--format",
+        type=str,
+        default="wav",
+        choices=["wav", "mp3", "flac"],
+        help="Audio format for exported files"
+    )
+    export_parser.set_defaults(func=export_voices)
     
     # Parse arguments
     args = parser.parse_args()

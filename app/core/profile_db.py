@@ -668,6 +668,142 @@ class ProfileDatabase:
             logger.error(f"Failed to get profile appearances: {e}")
             raise ProfileDBError(f"Failed to get profile appearances: {e}")
     
+    def get_recording(self, recording_id: str) -> Optional[Dict]:
+        """
+        Get a recording from the database.
+        
+        Args:
+            recording_id: Recording identifier
+            
+        Returns:
+            Recording dictionary or None if not found
+            
+        Raises:
+            ProfileDBError: If retrieval fails
+        """
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            cursor = conn.cursor()
+            
+            # Get recording
+            cursor.execute('''
+            SELECT recording_id, name, path, duration, created_at, metadata
+            FROM recordings
+            WHERE recording_id = ?
+            ''', (recording_id,))
+            
+            row = cursor.fetchone()
+            if row is None:
+                conn.close()
+                return None
+                
+            recording_dict = {
+                'recording_id': row[0],
+                'name': row[1],
+                'file_path': row[2],
+                'duration': row[3],
+                'created_at': row[4],
+                'metadata': json.loads(row[5])
+            }
+            
+            conn.close()
+            return recording_dict
+            
+        except Exception as e:
+            logger.error(f"Failed to get recording: {e}")
+            raise ProfileDBError(f"Failed to get recording: {e}")
+    
+    def get_recording_appearances(self, recording_id: str) -> List[Dict]:
+        """
+        Get all appearances in a recording.
+        
+        Args:
+            recording_id: Recording identifier
+            
+        Returns:
+            List of appearance dictionaries
+            
+        Raises:
+            ProfileDBError: If retrieval fails
+        """
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            cursor = conn.cursor()
+            
+            # Get appearances
+            cursor.execute('''
+            SELECT a.appearance_id, a.profile_id, a.confidence, a.duration, a.metadata,
+                   p.name as profile_name
+            FROM appearances a
+            JOIN profiles p ON a.profile_id = p.profile_id
+            WHERE a.recording_id = ?
+            ORDER BY a.confidence DESC
+            ''', (recording_id,))
+            
+            appearances = []
+            for row in cursor.fetchall():
+                appearance_dict = {
+                    'appearance_id': row[0],
+                    'profile_id': row[1],
+                    'confidence': row[2],
+                    'duration': row[3],
+                    'metadata': json.loads(row[4]),
+                    'profile_name': row[5]
+                }
+                
+                appearances.append(appearance_dict)
+                
+            conn.close()
+            return appearances
+            
+        except Exception as e:
+            logger.error(f"Failed to get recording appearances: {e}")
+            raise ProfileDBError(f"Failed to get recording appearances: {e}")
+    
+    def list_recordings(self) -> List[Dict]:
+        """
+        List all recordings in the database.
+        
+        Returns:
+            List of recording dictionaries
+            
+        Raises:
+            ProfileDBError: If listing fails
+        """
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            cursor = conn.cursor()
+            
+            # Get recordings
+            cursor.execute('''
+            SELECT recording_id, name, path, duration, created_at, metadata
+            FROM recordings
+            ORDER BY name, created_at
+            ''')
+            
+            recordings = []
+            for row in cursor.fetchall():
+                recording_id = row[0]
+                
+                # Create recording dictionary
+                recording_dict = {
+                    'recording_id': recording_id,
+                    'name': row[1],
+                    'file_path': row[2],
+                    'duration': row[3],
+                    'created_at': row[4],
+                    'metadata': json.loads(row[5])
+                }
+                
+                recordings.append(recording_dict)
+                
+            conn.close()
+            return recordings
+            
+        except Exception as e:
+            logger.error(f"Failed to list recordings: {e}")
+            raise ProfileDBError(f"Failed to list recordings: {e}")
+    
     def backup_database(self, backup_path: Union[str, Path] = None) -> str:
         """
         Create a backup of the database.
