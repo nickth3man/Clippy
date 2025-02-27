@@ -425,6 +425,341 @@ def export_voices(args: argparse.Namespace) -> None:
         pipeline.close()
 
 
+def interactive_mode(args: argparse.Namespace) -> None:
+    """
+    Interactive mode for reviewing and correcting processing results.
+    
+    Args:
+        args: Command line arguments
+    """
+    from app.core import Pipeline
+    import readline  # For better input experience
+    
+    print("\n=== Clippy Interactive Mode ===")
+    print("This mode allows you to review and correct processing results.\n")
+    
+    # Initialize pipeline
+    pipeline = Pipeline(
+        models_dir=args.models_dir,
+        db_path=args.db_path,
+        device=args.device
+    )
+    
+    # Get all processing results
+    results = pipeline.get_all_processing_results()
+    
+    if not results:
+        print("No processing results found. Please process some recordings first.")
+        return
+    
+    # Display available recordings
+    print("Available recordings:")
+    for i, result in enumerate(results):
+        recording_path = result.recording_path or "Unknown path"
+        print(f"{i+1}. {result.recording_id} - {os.path.basename(recording_path)}")
+    
+    # Select recording
+    while True:
+        try:
+            selection = input("\nSelect a recording (number) or 'q' to quit: ")
+            if selection.lower() == 'q':
+                break
+                
+            idx = int(selection) - 1
+            if 0 <= idx < len(results):
+                selected_result = results[idx]
+                _interactive_recording_menu(pipeline, selected_result)
+            else:
+                print("Invalid selection. Please try again.")
+        except ValueError:
+            print("Please enter a valid number.")
+        except KeyboardInterrupt:
+            print("\nExiting interactive mode...")
+            break
+    
+    pipeline.close()
+
+
+def _interactive_recording_menu(pipeline: 'Pipeline', result: 'ProcessingResult') -> None:
+    """
+    Interactive menu for a specific recording.
+    
+    Args:
+        pipeline: Pipeline instance
+        result: Processing result to work with
+    """
+    recording_path = result.recording_path or "Unknown path"
+    print(f"\n=== Recording: {os.path.basename(recording_path)} ===")
+    
+    while True:
+        print("\nOptions:")
+        print("1. View detected speakers")
+        print("2. Reassign speaker voices")
+        print("3. Manage speaker profiles")
+        print("4. Export separated voices")
+        print("5. Back to recording selection")
+        
+        try:
+            choice = input("\nEnter your choice: ")
+            
+            if choice == '1':
+                _view_detected_speakers(pipeline, result)
+            elif choice == '2':
+                _reassign_speaker_voices(pipeline, result)
+            elif choice == '3':
+                _manage_speaker_profiles(pipeline, result)
+            elif choice == '4':
+                _export_voices_interactive(pipeline, result)
+            elif choice == '5':
+                break
+            else:
+                print("Invalid choice. Please try again.")
+        except KeyboardInterrupt:
+            print("\nReturning to recording selection...")
+            break
+
+
+def _view_detected_speakers(pipeline: 'Pipeline', result: 'ProcessingResult') -> None:
+    """
+    View detected speakers in a recording.
+    
+    Args:
+        pipeline: Pipeline instance
+        result: Processing result to work with
+    """
+    print("\n=== Detected Speakers ===")
+    
+    if not result.speakers:
+        print("No speakers detected.")
+        return
+    
+    for i, speaker in enumerate(result.speakers):
+        speaker_id = speaker.get('id', 'Unknown')
+        profile_id = speaker.get('profile_id', 'None')
+        confidence = speaker.get('confidence', 0.0)
+        speaking_time = speaker.get('speaking_time', 0.0)
+        
+        profile_name = "Unknown"
+        if profile_id != 'None' and profile_id is not None:
+            profile = pipeline.get_profile(profile_id)
+            if profile:
+                profile_name = profile.name or f"Profile {profile_id}"
+        
+        print(f"{i+1}. Speaker {speaker_id}")
+        print(f"   Profile: {profile_name} ({profile_id})")
+        print(f"   Confidence: {confidence:.2f}")
+        print(f"   Speaking time: {speaking_time:.2f} seconds")
+
+
+def _reassign_speaker_voices(pipeline: 'Pipeline', result: 'ProcessingResult') -> None:
+    """
+    Reassign speaker voices to different profiles.
+    
+    Args:
+        pipeline: Pipeline instance
+        result: Processing result to work with
+    """
+    print("\n=== Reassign Speaker Voices ===")
+    
+    if not result.speakers:
+        print("No speakers detected.")
+        return
+    
+    # List all speakers first
+    _view_detected_speakers(pipeline, result)
+    
+    # List all available profiles
+    profiles = pipeline.list_profiles()
+    print("\nAvailable profiles:")
+    for i, profile in enumerate(profiles):
+        print(f"{i+1}. {profile.get('name', 'Unnamed')} ({profile.get('id')})")
+    
+    # Select speaker to reassign
+    try:
+        speaker_idx = int(input("\nSelect speaker to reassign (number): ")) - 1
+        if not (0 <= speaker_idx < len(result.speakers)):
+            print("Invalid speaker selection.")
+            return
+            
+        profile_idx = int(input("Assign to profile (number) or 0 for new profile: ")) - 1
+        
+        if profile_idx == -1:
+            # Create new profile
+            name = input("Enter name for new profile: ")
+            new_profile = pipeline.create_profile(name=name)
+            profile_id = new_profile.id
+        elif 0 <= profile_idx < len(profiles):
+            profile_id = profiles[profile_idx].get('id')
+        else:
+            print("Invalid profile selection.")
+            return
+        
+        # Update the speaker's profile
+        speaker = result.speakers[speaker_idx]
+        old_profile_id = speaker.get('profile_id')
+        
+        # Perform the reassignment
+        success = pipeline.reassign_speaker(
+            recording_id=result.recording_id,
+            speaker_id=speaker.get('id'),
+            new_profile_id=profile_id
+        )
+        
+        if success:
+            print(f"Speaker reassigned from profile {old_profile_id} to {profile_id}.")
+        else:
+            print("Failed to reassign speaker.")
+            
+    except ValueError:
+        print("Please enter valid numbers.")
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+
+
+def _manage_speaker_profiles(pipeline: 'Pipeline', result: 'ProcessingResult') -> None:
+    """
+    Manage speaker profiles related to this recording.
+    
+    Args:
+        pipeline: Pipeline instance
+        result: Processing result to work with
+    """
+    print("\n=== Manage Speaker Profiles ===")
+    
+    while True:
+        print("\nOptions:")
+        print("1. Rename a profile")
+        print("2. Merge profiles")
+        print("3. View profile details")
+        print("4. Back to recording menu")
+        
+        try:
+            choice = input("\nEnter your choice: ")
+            
+            if choice == '1':
+                # List all available profiles
+                profiles = pipeline.list_profiles()
+                print("\nAvailable profiles:")
+                for i, profile in enumerate(profiles):
+                    print(f"{i+1}. {profile.get('name', 'Unnamed')} ({profile.get('id')})")
+                
+                profile_idx = int(input("\nSelect profile to rename (number): ")) - 1
+                if 0 <= profile_idx < len(profiles):
+                    profile_id = profiles[profile_idx].get('id')
+                    new_name = input("Enter new name: ")
+                    success = pipeline.rename_profile(profile_id, new_name)
+                    if success:
+                        print(f"Profile renamed to {new_name}.")
+                    else:
+                        print("Failed to rename profile.")
+                else:
+                    print("Invalid profile selection.")
+                    
+            elif choice == '2':
+                # List all available profiles
+                profiles = pipeline.list_profiles()
+                print("\nAvailable profiles:")
+                for i, profile in enumerate(profiles):
+                    print(f"{i+1}. {profile.get('name', 'Unnamed')} ({profile.get('id')})")
+                
+                source_idx = int(input("\nSelect source profile to merge (number): ")) - 1
+                target_idx = int(input("Select target profile to merge into (number): ")) - 1
+                
+                if 0 <= source_idx < len(profiles) and 0 <= target_idx < len(profiles) and source_idx != target_idx:
+                    source_id = profiles[source_idx].get('id')
+                    target_id = profiles[target_idx].get('id')
+                    
+                    confirmation = input(f"Are you sure you want to merge {profiles[source_idx].get('name')} into {profiles[target_idx].get('name')}? (y/n): ")
+                    if confirmation.lower() == 'y':
+                        success = pipeline.merge_profiles(source_id, target_id)
+                        if success:
+                            print("Profiles merged successfully.")
+                        else:
+                            print("Failed to merge profiles.")
+                else:
+                    print("Invalid profile selection.")
+                    
+            elif choice == '3':
+                # List all available profiles
+                profiles = pipeline.list_profiles()
+                print("\nAvailable profiles:")
+                for i, profile in enumerate(profiles):
+                    print(f"{i+1}. {profile.get('name', 'Unnamed')} ({profile.get('id')})")
+                
+                profile_idx = int(input("\nSelect profile to view (number): ")) - 1
+                if 0 <= profile_idx < len(profiles):
+                    profile_id = profiles[profile_idx].get('id')
+                    profile = pipeline.get_profile(profile_id)
+                    appearances = pipeline.get_profile_appearances(profile_id)
+                    
+                    print(f"\nProfile: {profile.name} ({profile.id})")
+                    print(f"Created: {profile.created_at}")
+                    print(f"Updated: {profile.updated_at}")
+                    print(f"Quality: {profile.quality:.2f}")
+                    print(f"Recordings: {len(appearances)}")
+                    
+                    print("\nAppearances:")
+                    for i, appearance in enumerate(appearances):
+                        recording_id = appearance.get('recording_id', 'Unknown')
+                        confidence = appearance.get('confidence', 0.0)
+                        speaking_time = appearance.get('speaking_time', 0.0)
+                        print(f"{i+1}. Recording: {recording_id}")
+                        print(f"   Confidence: {confidence:.2f}")
+                        print(f"   Speaking time: {speaking_time:.2f} seconds")
+                else:
+                    print("Invalid profile selection.")
+                    
+            elif choice == '4':
+                break
+            else:
+                print("Invalid choice. Please try again.")
+                
+        except ValueError:
+            print("Please enter valid numbers.")
+        except KeyboardInterrupt:
+            print("\nReturning to recording menu...")
+            break
+
+
+def _export_voices_interactive(pipeline: 'Pipeline', result: 'ProcessingResult') -> None:
+    """
+    Export separated voices with interactive options.
+    
+    Args:
+        pipeline: Pipeline instance
+        result: Processing result to work with
+    """
+    print("\n=== Export Separated Voices ===")
+    
+    # Ask for export directory
+    default_dir = os.path.join("data", "exports", result.recording_id)
+    export_dir = input(f"Export directory [{default_dir}]: ") or default_dir
+    
+    # Ask for export format
+    format_options = ["wav", "mp3", "flac"]
+    format_str = ", ".join(format_options)
+    format_choice = input(f"Export format [{format_str}] (default: wav): ") or "wav"
+    
+    if format_choice not in format_options:
+        print(f"Invalid format. Using wav instead.")
+        format_choice = "wav"
+    
+    # Perform the export
+    try:
+        exported_files = pipeline.export_separated_voices(
+            result=result,
+            output_dir=export_dir,
+            format=format_choice
+        )
+        
+        print(f"Successfully exported {len(exported_files)} voice files to {export_dir}")
+        for i, file_path in enumerate(exported_files):
+            print(f"{i+1}. {os.path.basename(file_path)}")
+            
+    except Exception as e:
+        print(f"Error exporting voices: {str(e)}")
+
+
 def main() -> None:
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
@@ -606,6 +941,13 @@ def main() -> None:
     )
     export_parser.set_defaults(func=export_voices)
     
+    # Interactive mode command
+    interactive_parser = subparsers.add_parser(
+        "interactive",
+        help="Start interactive mode for reviewing and correcting results"
+    )
+    interactive_parser.set_defaults(func=interactive_mode)
+
     # Parse arguments
     args = parser.parse_args()
     
